@@ -113,7 +113,6 @@ export = class ServerlessWebpackPrisma {
     const packageName = ['prisma'];
     if (this.getPrismaVersion()) packageName.push(this.getPrismaVersion());
     const args = ['install', '-D', packageName.join('@')];
-    console.log('jest', args, packageName);
     this.runCommand(this.getPackageManager(), args, { cwd });
   }
 
