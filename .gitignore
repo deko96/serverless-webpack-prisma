@@ -109,3 +109,6 @@ typings/
 .DS_Store
 .AppleDouble
 .LSOverride
+
+# TSC output dir
+dist/
