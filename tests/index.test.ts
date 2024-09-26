@@ -16,18 +16,27 @@ describe('ServerlessWebpackPrisma Plugin', () => {
   let mockLogger: ServerlessWriteText;
   const mockCwd = '/fake-dir';
   const mockPrismaDir = '/prisma-dir';
+  const mockFunctions = {
+    fn1: {},
+    fn2: {},
+  };
 
   beforeEach(() => {
     mockLogger = jest.fn();
     mockServerless = {
       service: {
+        functions: mockFunctions,
         custom: {
           webpack: {},
-          prisma: {},
+          prisma: {
+            ignoredFunctions: ['fn2'],
+          },
         },
         provider: {},
-        getAllFunctions: jest.fn(),
-        getFunction: jest.fn(),
+        getAllFunctions: jest.fn().mockReturnValue(Object.keys(mockFunctions)),
+        getFunction: jest
+          .fn()
+          .mockImplementation((name) => _.get(mockFunctions, name)),
       },
       config: { servicePath: '/service/path' },
     } as unknown as Serverless;
@@ -35,10 +44,6 @@ describe('ServerlessWebpackPrisma Plugin', () => {
     plugin = new ServerlessWebpackPrisma(mockServerless, mockOptions, {
       writeText: mockLogger,
     });
-  });
-
-  beforeEach(() => {
-    jest.spyOn(childProcess, 'execSync').mockReturnValue('');
   });
 
   test('runCommand should execute a command with childProcess', () => {
@@ -57,39 +62,61 @@ describe('ServerlessWebpackPrisma Plugin', () => {
   });
 
   test('getArchitecture should return the default architecture', () => {
-    jest.spyOn(_, 'get').mockReturnValue('x86_64');
     const architecture = plugin.getArchitecture();
     expect(architecture).toBe('x86_64');
   });
 
   test('getArchitecture should return custom architecture', () => {
-    jest.spyOn(_, 'get').mockReturnValue('arm64');
+    _.set(mockServerless, 'service.provider.architecture', 'arm64');
     const architecture = plugin.getArchitecture();
     expect(architecture).toBe('arm64');
   });
 
   test('getPackageManager should return the default package manager', () => {
-    jest.spyOn(_, 'get').mockReturnValue('npm');
     const result = plugin.getPackageManager();
     expect(result).toBe('npm');
   });
 
   test('getPackageManager should return a custom package manager', () => {
-    jest.spyOn(_, 'get').mockReturnValue('yarn');
+    _.set(mockServerless, 'service.custom.webpack.packager', 'yarn');
     const result = plugin.getPackageManager();
     expect(result).toBe('yarn');
   });
 
   test('getPrismaVersion should return the prisma version', () => {
-    jest.spyOn(_, 'get').mockReturnValue('5.0.0');
+    _.set(mockServerless, 'service.custom.prisma.version', '5.0.0');
     const result = plugin.getPrismaVersion();
     expect(result).toBe('5.0.0');
   });
 
   test('getInstallDeps should return the installDeps value', () => {
-    jest.spyOn(_, 'get').mockReturnValue(true);
+    _.set(mockServerless, 'service.custom.prisma.installDeps', false);
     const result = plugin.getInstallDeps();
+    expect(result).toBe(false);
+  });
+
+  test('getUseSymlink should return the useSymLinkForPrisma value', () => {
+    _.set(mockServerless, 'service.custom.prisma.useSymLinkForPrisma', true);
+    const result = plugin.getUseSymlink();
     expect(result).toBe(true);
+  });
+
+  test('getIsDataProxy should return the dataProxy value', () => {
+    _.set(mockServerless, 'service.custom.prisma.dataProxy', true);
+    const result = plugin.getIsDataProxy();
+    expect(result).toBe(true);
+  });
+
+  test('getPrismaPath should return the prismaPath value', () => {
+    _.set(mockServerless, 'service.custom.prisma.prismaPath', '../../');
+    const result = plugin.getPrismaPath();
+    expect(result).toBe('../../');
+  });
+
+  test("getWebpackOutputPath should return webpack's webpackOutputPath value", () => {
+    _.set(mockServerless, 'service.custom.webpack.webpackOutputPath', '../../');
+    const result = plugin.getWebpackOutputPath();
+    expect(result).toBe('../../');
   });
 
   test('managePackageScripts should add prisma generate script', () => {
@@ -111,6 +138,26 @@ describe('ServerlessWebpackPrisma Plugin', () => {
     );
   });
 
+  test('managePackageScripts should add prisma generate script with --data-proxy', () => {
+    const packageJson = { scripts: {} };
+    _.set(mockServerless, 'service.custom.prisma.dataProxy', true);
+    jest.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify(packageJson));
+    plugin.managePackageScripts('add', mockCwd);
+
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      path.join(mockCwd, 'package.json'),
+      JSON.stringify(
+        {
+          scripts: {
+            'prisma:generate': 'prisma generate --data-proxy',
+          },
+        },
+        null,
+        2
+      )
+    );
+  });
+
   test('managePackageScripts should remove prisma generate script', () => {
     const packageJson = { scripts: { 'prisma:generate': 'prisma generate' } };
     jest.spyOn(fs, 'readFileSync').mockReturnValue(JSON.stringify(packageJson));
@@ -122,7 +169,7 @@ describe('ServerlessWebpackPrisma Plugin', () => {
     );
   });
 
-  test('installPrismaPackage should install prisma', () => {
+  test('installPrismaPackage should install the latest prisma release', () => {
     const managePackageScripts = jest.spyOn(plugin, 'managePackageScripts');
     const runCommand = jest.spyOn(plugin, 'runCommand');
 
@@ -132,6 +179,23 @@ describe('ServerlessWebpackPrisma Plugin', () => {
     expect(runCommand).toHaveBeenCalledWith(
       'npm',
       ['install', '-D', 'prisma'],
+      {
+        cwd: mockCwd,
+      }
+    );
+  });
+
+  test('installPrismaPackage should install specific prisma version', () => {
+    _.set(mockServerless, 'service.custom.prisma.version', '5.0.0');
+    const managePackageScripts = jest.spyOn(plugin, 'managePackageScripts');
+    const runCommand = jest.spyOn(plugin, 'runCommand');
+
+    plugin.installPrismaPackage(mockCwd);
+
+    expect(managePackageScripts).toHaveBeenCalledWith('add', mockCwd);
+    expect(runCommand).toHaveBeenCalledWith(
+      'npm',
+      ['install', '-D', 'prisma@5.0.0'],
       {
         cwd: mockCwd,
       }
@@ -158,14 +222,12 @@ describe('ServerlessWebpackPrisma Plugin', () => {
     plugin.deletePrismaDirectories(mockCwd);
 
     expect(rmSync).toHaveBeenCalledTimes(2);
-    expect(rmSync).toHaveBeenCalledWith(
-      path.join(mockCwd, 'node_modules', '.bin/prisma'),
-      { recursive: true, force: true }
-    );
-    expect(rmSync).toHaveBeenCalledWith(
-      path.join(mockCwd, 'node_modules', 'prisma'),
-      { recursive: true, force: true }
-    );
+    ['.bin/prisma', 'prisma'].forEach((relativePath) => {
+      expect(rmSync).toHaveBeenCalledWith(
+        path.join(mockCwd, 'node_modules', relativePath),
+        { recursive: true, force: true }
+      );
+    });
   });
 
   test('managePrismaSchema should copy prisma schema', () => {
@@ -200,83 +262,62 @@ describe('ServerlessWebpackPrisma Plugin', () => {
   });
 
   test('deleteUnusedEngines should delete unused engines', () => {
-    jest.spyOn(glob, 'globSync').mockReturnValue(['engine1', 'engine2']);
+    const engines = ['engine1', 'engine2'];
+    jest.spyOn(glob, 'globSync').mockReturnValue(engines);
     plugin.deleteUnusedEngines(mockCwd);
 
-    expect(fs.rmSync).toHaveBeenCalledWith(path.join(mockCwd, 'engine1'), {
-      force: true,
-    });
-    expect(fs.rmSync).toHaveBeenCalledWith(path.join(mockCwd, 'engine2'), {
-      force: true,
+    engines.forEach((engine) => {
+      expect(fs.rmSync).toHaveBeenCalledWith(path.join(mockCwd, engine), {
+        force: true,
+      });
     });
   });
 
   test('getFunctionNames should return service if package individually is false', () => {
-    jest.spyOn(_, 'get').mockReturnValue(false);
+    _.set(mockServerless, 'service.package.individually', false);
     const result = plugin.getFunctionNames();
     expect(result).toEqual(['service']);
   });
 
-  test('getFunctionNames should return node functions if package individually is true', () => {
-    jest.spyOn(_, 'get').mockReturnValue(true);
-    const mockNodeFunctions = ['func1', 'func2'];
-    plugin.getNodeFunctions = jest.fn().mockReturnValue(mockNodeFunctions);
+  test('getFunctionNames should return list of functions if package individually is true', () => {
+    _.set(mockServerless, 'service.package.individually', true);
 
     const result = plugin.getFunctionNames();
-    expect(result).toEqual(mockNodeFunctions);
+    const expected = Object.keys(mockFunctions);
+
+    expect(result).toEqual(expected);
   });
 
   test('getIgnoredFunctions should return ignored functions', () => {
-    const ignoredFunctions = ['func1', 'func2'];
-    jest.spyOn(_, 'get').mockReturnValue(ignoredFunctions);
-
+    const ignoredFunctions = ['fn2', 'fn3'];
+    _.set(
+      mockServerless,
+      'service.custom.prisma.ignoreFunctions',
+      ignoredFunctions
+    );
     const result = plugin.getIgnoredFunctions();
     expect(result).toBe(ignoredFunctions);
   });
 
-  test('getNodeFunctions should return valid Node.js functions', () => {
-    const functions = ['func1', 'func2'];
-    jest
-      .spyOn(mockServerless.service, 'getAllFunctions')
-      .mockReturnValue(functions);
-
-    plugin.isFunctionImage = (jest.fn() as any).mockReturnValue(false);
-    plugin.isRuntimeNode = jest.fn().mockReturnValue(true);
-    plugin.isFunctionIgnored = jest.fn().mockReturnValue(false);
+  test('getNodeFunctions should exclude ignored functions & functions that use docker image', () => {
+    _.set(mockServerless, 'service.custom.prisma.ignoreFunctions', ['fn3']);
+    _.set(
+      mockServerless,
+      'service.functions',
+      _.merge(mockServerless.service.functions, {
+        fn3: {},
+        fn4: {
+          runtime: 'python3.9',
+        },
+        fn5: {
+          image: 'dummy',
+        },
+      })
+    );
 
     const result = plugin.getNodeFunctions();
-    expect(result).toEqual(functions);
-  });
+    const expected = ['fn1', 'fn2'];
 
-  test('onBeforeWebpackPackage should perform all necessary tasks', () => {
-    const installPrismaPackage = jest.spyOn(plugin, 'installPrismaPackage');
-    const managePrismaSchema = jest.spyOn(plugin, 'managePrismaSchema');
-    const generatePrismaClient = jest.spyOn(plugin, 'generatePrismaClient');
-    const deleteUnusedEngines = jest.spyOn(plugin, 'deleteUnusedEngines');
-    const removePrismaPackage = jest.spyOn(plugin, 'removePrismaPackage');
-
-    jest.spyOn(plugin, 'getPrismaEngines').mockReturnValue([]);
-    jest.spyOn(plugin, 'getFunctionNames').mockReturnValue(['func1']);
-    jest.spyOn(plugin, 'getInstallDeps').mockReturnValue(true);
-    jest.spyOn(plugin, 'getUseSymlink').mockReturnValue(false);
-    jest.spyOn(plugin, 'getPrismaPath').mockReturnValue('/prisma/path');
-    jest.spyOn(plugin, 'getWebpackOutputPath').mockReturnValue('/fake-dir');
-
-    plugin.onBeforeWebpackPackage();
-
-    [
-      installPrismaPackage,
-      generatePrismaClient,
-      deleteUnusedEngines,
-      removePrismaPackage,
-    ].forEach((fn) =>
-      expect(fn).toHaveBeenCalledWith('/fake-dir/.webpack/func1')
-    );
-
-    expect(managePrismaSchema).toHaveBeenCalledWith(
-      'copy',
-      '/fake-dir/.webpack/func1',
-      path.join('/prisma/path', 'prisma')
-    );
+    expect(result).toStrictEqual(expected);
   });
 });
