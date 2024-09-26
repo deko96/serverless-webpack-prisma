@@ -73,6 +73,10 @@ export = class ServerlessWebpackPrisma {
     );
   }
 
+  getIsDataProxy() {
+    return get(this.serverless, 'service.custom.prisma.dataProxy', false);
+  }
+
   getPrismaEngines() {
     const prefix = this.getArchitectures()[this.getArchitecture()];
     return [
@@ -99,7 +103,9 @@ export = class ServerlessWebpackPrisma {
     const parsed = JSON.parse(contents);
 
     if (action === 'add') {
-      set(parsed, 'scripts.prisma:generate', 'prisma generate');
+      const cmd = ['prisma', 'generate'];
+      if (this.getIsDataProxy()) cmd.push('--data-proxy');
+      set(parsed, 'scripts.prisma:generate', cmd.join(' '));
     } else {
       unset(parsed, 'scripts.prisma:generate');
     }
@@ -174,6 +180,8 @@ export = class ServerlessWebpackPrisma {
 
   generatePrismaClient(cwd: string) {
     this.log('Generating Prisma client...');
+    const args = ['run', 'prisma:generate'];
+    if (this.getIsDataProxy()) args.push('--data-proxy');
     this.runCommand(this.getPackageManager(), ['run', 'prisma:generate'], {
       cwd,
     });
